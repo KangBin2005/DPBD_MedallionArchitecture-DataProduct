@@ -40,9 +40,8 @@ The Medallion Architecture was implemented in Snowflake with three core layers:
 
 | Dataset | Source | Description |
 |---------|--------|-------------|
-| `water_quality.csv` | Kaggle | 3,276 water bodies with 9 quality parameters |
-| `water_potability.csv` | Kaggle | Potability indicator (1 = Potable, 0 = Not potable) |
-| `singapore_water_quality.csv` | data.gov.sg (PUB) | Singapore drinking water quality data (2019-2022) |
+| `water_potability.csv` | Kaggle | Potability indicator (1 = Potable, 0 = Not potable) for corresponding water samples | 3,276 water bodies with 9 quality parameters (pH, Hardness, Solids, Chloramines, Sulfate, Conductivity, Organic Carbon, Trihalomethanes, Turbidity) 
+| `SingaporeDrinkingwaterqualitydatasets.csv` | data.gov.sg (PUB) | Singapore drinking water quality data from 2019 to 2022, containing 80+ water quality parameters including pH, Conductivity, Total Dissolved Solids, Turbidity, and various chemical contaminants |
 
 ---
 
