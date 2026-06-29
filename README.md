@@ -40,7 +40,7 @@ The Medallion Architecture was implemented in Snowflake with three core layers:
 
 | Dataset | Source | Description |
 |---------|--------|-------------|
-| `water_potability.csv` | Kaggle | Potability indicator (1 = Potable, 0 = Not potable) for corresponding water samples | 3,276 water bodies with 9 quality parameters (pH, Hardness, Solids, Chloramines, Sulfate, Conductivity, Organic Carbon, Trihalomethanes, Turbidity) 
+| `water_potability.csv` | Kaggle | Potability indicator (1 = Potable, 0 = Not potable) for corresponding water samples with 9 water quality parameters (pH, Hardness, Solids, Chloramines, Sulfate, Conductivity, Organic Carbon, Trihalomethanes, Turbidity) for 3,276 water bodies
 | `SingaporeDrinkingwaterqualitydatasets.csv` | data.gov.sg (PUB) | Singapore drinking water quality data from 2019 to 2022, containing 80+ water quality parameters including pH, Conductivity, Total Dissolved Solids, Turbidity, and various chemical contaminants |
 
 ---
@@ -86,4 +86,52 @@ An interactive Streamlit dashboard connected to Snowflake's Gold Layer provides:
 4. **Automate anomaly detection** for proactive monitoring
 5. **Address model bias** using SMOTE for class imbalance
 
+## 📁 Repository Structure
 
+```text
+DPBD_MedallionArchitecture-DataProduct/
+│
+├── 244423Q_IT3383_Assignment.sql
+│ └── Complete SQL script containing Bronze, Silver, and Gold layer implementations
+│
+├── SingaporeDrinkingwaterqualitydatasets.csv
+│ └── Singapore PUB drinking water quality data (2019 and 2022, 80+ parameters)
+│
+├── water_potability.csv
+│ └── Kaggle dataset with 9 water quality parameters and potability indicator
+│
+├── IT3383_244423Q_DPBD_Assignment_Report.docx
+│ └── Full assignment report with all SQL code, screenshots, and analysis
+│
+└── README.md
+└── This file
+```
+
+
+---
+
+### SQL File Contents (`244423Q_IT3383_Assignment.sql`)
+
+| Layer | Contents |
+|-------|----------|
+| **Bronze** | Stage creation, file format, temporary tables, COPY INTO commands, timestamp tracking |
+| **Silver** | NULL handling with COALESCE, symbolic value conversion (`<` values), text rejection, validation queries |
+| **Gold** | Materialized views, aggregation tables (potability distribution, WHO compliance, yearly trends) |
+| **Time Travel** | UNDROP and BEFORE queries with 7-day retention demonstration |
+
+---
+
+### Data Files
+
+| File | Description |
+|------|-------------|
+| `SingaporeDrinkingwaterqualitydatasets.csv` | PUB water quality data (2019-2022, 80+ parameters including pH, Conductivity, TDS, Turbidity, Monochloramine) |
+| `water_potability.csv` | Kaggle dataset (3,276 water bodies, 9 quality parameters, potability indicator) |
+
+---
+
+### Report File
+
+| File | Description |
+|------|-------------|
+| `IT3383_244423Q_DPBD_Assignment_Report.docx` | Complete assignment documentation with DDL/DML statements, screenshot analysis, and key insights |
