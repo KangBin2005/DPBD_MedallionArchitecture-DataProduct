@@ -1,0 +1,499 @@
+-- ==========================================
+-- 1. CONTEXT & ENVIRONMENT SETUP
+-- ==========================================
+
+USE ROLE training_role;
+CREATE WAREHOUSE IF NOT EXISTS PARROT_wh;
+USE WAREHOUSE PARROT_wh;
+CREATE DATABASE IF NOT EXISTS PARROT_db;
+USE DATABASE PARROT_db;
+
+-- Drop existing schemas to start fresh if needed
+DROP SCHEMA IF EXISTS BRONZE CASCADE;
+DROP SCHEMA IF EXISTS SILVER CASCADE;
+DROP SCHEMA IF EXISTS GOLD CASCADE;
+
+-- Create Medallion layers
+CREATE SCHEMA IF NOT EXISTS BRONZE;
+CREATE SCHEMA IF NOT EXISTS SILVER;
+CREATE SCHEMA IF NOT EXISTS GOLD;
+
+-- Enable Time Travel (7 days retention)
+ALTER DATABASE PARROT_db SET DATA_RETENTION_TIME_IN_DAYS = 7;
+
+
+-- ==========================================
+-- 2. CREATE STAGE FOR RAW CSV FILES (BRONZE)
+-- ==========================================
+
+USE DATABASE PARROT_db;
+USE SCHEMA BRONZE;
+
+-- Create an internal stage to store CSV files
+CREATE OR REPLACE STAGE PARROT_db.BRONZE.water_csv_stage;
+
+-- List files in stage (will be empty initially)
+LIST @PARROT_db.BRONZE.water_csv_stage;
+
+-- ==========================================
+-- 3. CREATE FILE FORMAT FOR CSV (BRONZE)
+-- ==========================================
+
+CREATE OR REPLACE FILE FORMAT PARROT_db.BRONZE.csv_format
+  TYPE = CSV
+  COMPRESSION = NONE
+  FIELD_DELIMITER = ','
+  SKIP_HEADER = 1
+  NULL_IF = ('NULL', '')
+  EMPTY_FIELD_AS_NULL = TRUEKANGAROO_DB.WATER_ANALYTICS_SCHEMA
+  ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE;
+
+
+
+
+-- ==========================================
+-- 4. BRONZE LAYER - CREATE TEMP TABLES
+-- ==========================================
+
+USE DATABASE PARROT_db;
+USE SCHEMA BRONZE;
+
+-- Temp table for Water Quality (no timestamps for UI loading)
+CREATE OR REPLACE TABLE PARROT_db.BRONZE.WATER_QUALITY_TEMP (
+    YEAR INT,
+    WATER_QUALITY_PARAMETER VARCHAR,
+    AVERAGE_VALUE VARCHAR, 
+    UNIT VARCHAR
+);
+
+-- Temp table for Water Potability (no timestamps for UI loading)
+CREATE OR REPLACE TABLE PARROT_db.BRONZE.WATER_POTABILITY_TEMP (
+    PH FLOAT,
+    HARDNESS FLOAT,
+    SOLIDS FLOAT,
+    CHLORAMINES FLOAT,
+    SULFATE FLOAT,
+    CONDUCTIVITY FLOAT,
+    ORGANIC_CARBON FLOAT,
+    TRIHALOMETHANES FLOAT,
+    TURBIDITY FLOAT,
+    POTABILITY INT
+);
+
+-- ==========================================
+-- 5. LOAD DATA FROM STAGE INTO TEMP TABLES
+-- ==========================================
+
+-- INSTRUCTIONS:
+-- 1. Upload CSV files to stage using Snowflake UI:
+--    Data → Databases → PARROT_db → Stages → WATER_CSV_STAGE → Upload Files
+-- 2. Select both CSV files
+-- 3. Then run the COPY INTO commands below
+
+-- 5A: Load Water Quality from stage (SPECIFIC FILE)
+COPY INTO PARROT_db.BRONZE.WATER_QUALITY_TEMP (
+    YEAR,
+    WATER_QUALITY_PARAMETER,
+    AVERAGE_VALUE,
+    UNIT
+)
+FROM (
+    SELECT 
+        $1::INT AS YEAR,
+        $2::VARCHAR AS WATER_QUALITY_PARAMETER,
+        $3::VARCHAR AS AVERAGE_VALUE,
+        $4::VARCHAR AS UNIT
+    FROM @PARROT_db.BRONZE.water_csv_stage
+    (FILE_FORMAT => 'csv_format')
+)
+FILES = ('SingaporeDrinkingwaterqualitydatasets.csv');
+
+
+-- 5B: Load Water Potability from stage (SPECIFIC FILE)
+COPY INTO PARROT_db.BRONZE.WATER_POTABILITY_TEMP (
+    PH,
+    HARDNESS,
+    SOLIDS,
+    CHLORAMINES,
+    SULFATE,
+    CONDUCTIVITY,
+    ORGANIC_CARBON,
+    TRIHALOMETHANES,
+    TURBIDITY,
+    POTABILITY
+)
+FROM (
+    SELECT 
+        $1::FLOAT AS PH,
+        $2::FLOAT AS HARDNESS,
+        $3::FLOAT AS SOLIDS,
+        $4::FLOAT AS CHLORAMINES,
+        $5::FLOAT AS SULFATE,
+        $6::FLOAT AS CONDUCTIVITY,
+        $7::FLOAT AS ORGANIC_CARBON,
+        $8::FLOAT AS TRIHALOMETHANES,
+        $9::FLOAT AS TURBIDITY,
+        $10::INT AS POTABILITY
+    FROM @PARROT_db.BRONZE.water_csv_stage
+    (FILE_FORMAT => 'csv_format')
+)
+FILES = ('water_potability.csv');
+
+
+-- Verify data loaded into TEMP tables
+SELECT COUNT(*) AS water_quality_temp_rows FROM WATER_QUALITY_TEMP;
+SELECT COUNT(*) AS water_potability_temp_rows FROM WATER_POTABILITY_TEMP;
+
+
+-- ==========================================
+-- 6. CREATE FINAL BRONZE TABLES WITH TIMESTAMPS
+-- ==========================================
+
+-- 6A: Create final Water Quality table with timestamps
+CREATE OR REPLACE TABLE PARROT_db.BRONZE.WATER_QUALITY AS
+SELECT 
+    YEAR,
+    WATER_QUALITY_PARAMETER,
+    AVERAGE_VALUE,
+    UNIT,
+    CURRENT_TIMESTAMP() AS LOAD_TIMESTAMP,
+    CURRENT_DATE() AS LOAD_DATE
+FROM PARROT_db.BRONZE.WATER_QUALITY_TEMP;
+
+-- 6B: Create final Water Potability table with timestamps
+CREATE OR REPLACE TABLE PARROT_db.BRONZE.WATER_POTABILITY AS
+SELECT 
+    PH,
+    HARDNESS,
+    SOLIDS,
+    CHLORAMINES,
+    SULFATE,
+    CONDUCTIVITY,
+    ORGANIC_CARBON,
+    TRIHALOMETHANES,
+    TURBIDITY,
+    POTABILITY,
+    CURRENT_TIMESTAMP() AS LOAD_TIMESTAMP,
+    CURRENT_DATE() AS LOAD_DATE
+FROM PARROT_db.BRONZE.WATER_POTABILITY_TEMP;
+
+-- Drop temp tables
+DROP TABLE IF EXISTS PARROT_db.BRONZE.WATER_QUALITY_TEMP;
+DROP TABLE IF EXISTS PARROT_db.BRONZE.WATER_POTABILITY_TEMP;
+
+
+-- ==========================================
+-- 7. VERIFY BRONZE DATA WITH TIMESTAMPS
+-- ==========================================
+
+-- View Water Quality
+SELECT * FROM PARROT_db.BRONZE.WATER_QUALITY LIMIT 10;
+
+-- View Water Potability
+SELECT * FROM PARROT_db.BRONZE.WATER_POTABILITY LIMIT 10;
+
+-- Check timestamps for WATER_QUALITY
+SELECT 
+    LOAD_TIMESTAMP,
+    LOAD_DATE,
+    COUNT(*) as rows_loaded
+FROM PARROT_db.BRONZE.WATER_QUALITY
+GROUP BY LOAD_TIMESTAMP, LOAD_DATE;
+
+-- Check timestamps for WATER_POTABILITY
+SELECT 
+    LOAD_TIMESTAMP,
+    LOAD_DATE,
+    COUNT(*) as rows_loaded
+FROM PARROT_db.BRONZE.WATER_POTABILITY
+GROUP BY LOAD_TIMESTAMP, LOAD_DATE;
+
+
+-- ==========================================
+-- 8. TIME TRAVEL - DEMONSTRATE RAW DATA HISTORY
+-- ==========================================
+
+-- Step 1: Record current state BEFORE making changes
+SET dev_before_changes = CURRENT_TIMESTAMP();
+
+-- Step 2: Insert sample 2023 data into WATER_QUALITY (simulating a new load)
+INSERT INTO PARROT_db.BRONZE.WATER_QUALITY (
+    YEAR,
+    WATER_QUALITY_PARAMETER,
+    AVERAGE_VALUE,
+    UNIT,
+    LOAD_TIMESTAMP,
+    LOAD_DATE
+)
+VALUES 
+    (2023, 'PH VALUE', '7.9', 'Units', CURRENT_TIMESTAMP(), CURRENT_DATE()),
+    (2023, 'CONDUCTIVITY', '208', 'uS/cm', CURRENT_TIMESTAMP(), CURRENT_DATE()),
+    (2023, 'TURBIDITY', '0.10', 'NTU', CURRENT_TIMESTAMP(), CURRENT_DATE());
+
+-- Step 3: Record the query ID of the insert
+SET dev_insert_2023 = LAST_QUERY_ID();
+
+-- Step 4: Verify the new data is in the table
+SELECT * FROM PARROT_db.BRONZE.WATER_QUALITY WHERE YEAR = 2023;
+
+-- Step 5: USE TIME TRAVEL to see the table BEFORE the insert
+SELECT 
+    'BEFORE INSERT (Time Travel)' as SNAPSHOT,
+    COUNT(*) as TOTAL_ROWS,
+    MAX(YEAR) as LATEST_YEAR
+FROM PARROT_db.BRONZE.WATER_QUALITY 
+BEFORE(statement=>$dev_insert_2023);
+
+-- Step 6: Compare with current state (AFTER insert)
+SELECT 
+    'AFTER INSERT (Current)' as SNAPSHOT,
+    COUNT(*) as TOTAL_ROWS,
+    MAX(YEAR) as LATEST_YEAR
+FROM PARROT_db.BRONZE.WATER_QUALITY;
+
+-- Step 7: See exactly what was added (using MINUS)
+SELECT 
+    YEAR,
+    WATER_QUALITY_PARAMETER,
+    AVERAGE_VALUE,
+    UNIT
+FROM PARROT_db.BRONZE.WATER_QUALITY
+MINUS
+SELECT 
+    YEAR,
+    WATER_QUALITY_PARAMETER,
+    AVERAGE_VALUE,
+    UNIT
+FROM PARROT_db.BRONZE.WATER_QUALITY 
+BEFORE(statement=>$dev_insert_2023);
+
+
+-- ==========================================
+-- 9. UNDO INSERT USING TIME TRAVEL
+-- ==========================================
+
+-- 9A: Create a backup from before the insert
+CREATE TABLE PARROT_db.BRONZE.WATER_QUALITY_BACKUP
+CLONE PARROT_db.BRONZE.WATER_QUALITY
+BEFORE(statement=>$dev_insert_2023);
+
+-- 9B: UNDO - Replace current table with backup (removes 2023 data)
+CREATE OR REPLACE TABLE PARROT_db.BRONZE.WATER_QUALITY AS
+SELECT * FROM PARROT_db.BRONZE.WATER_QUALITY_BACKUP;
+
+-- 9C: Verify the undo worked
+SELECT 
+    'AFTER UNDO (Restored Original)' as SNAPSHOT,
+    COUNT(*) as TOTAL_ROWS,
+    MAX(YEAR) as MAX_YEAR
+FROM PARROT_db.BRONZE.WATER_QUALITY;
+
+-- Verify 2023 data is gone
+SELECT COUNT(*) as remaining_2023_rows
+FROM PARROT_db.BRONZE.WATER_QUALITY
+WHERE YEAR = 2023;
+
+-- 9D: Clean up - Drop the backup
+DROP TABLE IF EXISTS PARROT_db.BRONZE.WATER_QUALITY_BACKUP;
+
+
+-- ==========================================
+-- 10. SILVER LAYER (Data Cleaning & Validation)
+-- ==========================================
+
+USE DATABASE PARROT_db;
+USE SCHEMA SILVER;
+
+-- Check NULLs in WATER_POTABILITY
+SELECT 
+    'WATER_POTABILITY' AS table_name,
+    COUNT(*) AS total_rows,
+    COUNT(*) - COUNT(PH) AS null_ph,
+    COUNT(*) - COUNT(HARDNESS) AS null_hardness,
+    COUNT(*) - COUNT(SOLIDS) AS null_solids,
+    COUNT(*) - COUNT(CHLORAMINES) AS null_chloramines,
+    COUNT(*) - COUNT(SULFATE) AS null_sulfate,
+    COUNT(*) - COUNT(CONDUCTIVITY) AS null_conductivity,
+    COUNT(*) - COUNT(ORGANIC_CARBON) AS null_organic_carbon,
+    COUNT(*) - COUNT(TRIHALOMETHANES) AS null_trihalomethanes,
+    COUNT(*) - COUNT(TURBIDITY) AS null_turbidity,
+    COUNT(*) - COUNT(POTABILITY) AS null_potability
+FROM PARROT_db.BRONZE.WATER_POTABILITY
+WHERE LOAD_DATE = (SELECT MAX(LOAD_DATE) FROM PARROT_db.BRONZE.WATER_POTABILITY);
+
+-- Check NULLs in WATER_QUALITY
+SELECT 
+    'WATER_QUALITY' AS table_name,
+    COUNT(*) AS total_rows,
+    COUNT(*) - COUNT(YEAR) AS null_year,
+    COUNT(*) - COUNT(WATER_QUALITY_PARAMETER) AS null_parameter,
+    COUNT(*) - COUNT(AVERAGE_VALUE) AS null_average_value,
+    COUNT(*) - COUNT(UNIT) AS null_unit
+FROM PARROT_db.BRONZE.WATER_QUALITY
+WHERE LOAD_DATE = (SELECT MAX(LOAD_DATE) FROM PARROT_db.BRONZE.WATER_QUALITY);
+
+
+-- ==========================================
+-- 10A: Clean WATER_POTABILITY (Impute NULLs with AVG)
+-- ==========================================
+
+CREATE OR REPLACE TABLE PARROT_db.SILVER.CLEANED_WATER_PORTABILITY AS 
+SELECT 
+    COALESCE(PH, (SELECT AVG(PH) FROM PARROT_db.BRONZE.WATER_POTABILITY)) AS PH, 
+    HARDNESS, 
+    SOLIDS, 
+    CHLORAMINES,
+    COALESCE(SULFATE, (SELECT AVG(SULFATE) FROM PARROT_db.BRONZE.WATER_POTABILITY)) AS SULFATE,
+    CONDUCTIVITY, 
+    ORGANIC_CARBON,
+    COALESCE(TRIHALOMETHANES, (SELECT AVG(TRIHALOMETHANES) FROM PARROT_db.BRONZE.WATER_POTABILITY)) AS TRIHALOMETHANES,
+    TURBIDITY, 
+    POTABILITY
+FROM PARROT_db.BRONZE.WATER_POTABILITY
+WHERE LOAD_DATE = (SELECT MAX(LOAD_DATE) FROM PARROT_db.BRONZE.WATER_POTABILITY);
+
+
+-- ==========================================
+-- 10B: Clean WATER_QUALITY (Keep numbers and '<' values)
+-- ==========================================
+
+CREATE OR REPLACE TABLE PARROT_db.SILVER.CLEANED_WATER_QUALITY AS 
+SELECT 
+    YEAR,
+    UPPER(TRIM(WATER_QUALITY_PARAMETER)) AS WATER_QUALITY_PARAMETER,
+    CASE 
+        WHEN AVERAGE_VALUE LIKE '<%' THEN TRY_TO_DOUBLE(REPLACE(AVERAGE_VALUE, '<', ''))
+        ELSE TRY_TO_DOUBLE(AVERAGE_VALUE)
+    END AS AVERAGE_VALUE,
+    UPPER(TRIM(UNIT)) AS UNIT
+FROM PARROT_db.BRONZE.WATER_QUALITY
+WHERE LOAD_DATE = (SELECT MAX(LOAD_DATE) FROM PARROT_db.BRONZE.WATER_QUALITY)
+  AND (TRY_TO_DOUBLE(AVERAGE_VALUE) IS NOT NULL OR AVERAGE_VALUE LIKE '<%')
+  AND UPPER(TRIM(AVERAGE_VALUE)) NOT IN ('UNOBJECTIONABLE', 'NOTE (3)', 'NOTE')
+  AND TRY_TO_DOUBLE(REPLACE(AVERAGE_VALUE, '<', '')) IS NOT NULL;
+
+-- ==========================================
+-- 10C: Verify cleaning worked
+-- ==========================================
+
+SELECT * FROM PARROT_db.SILVER.CLEANED_WATER_PORTABILITY LIMIT 10;
+SELECT * FROM PARROT_db.SILVER.CLEANED_WATER_QUALITY LIMIT 10;
+
+
+-- ==========================================
+-- 11. GOLD LAYER (Materialized Views)
+-- ==========================================
+
+USE DATABASE PARROT_db;
+USE SCHEMA GOLD;
+
+-- Materialized View for Water Portability
+CREATE OR REPLACE MATERIALIZED VIEW PARROT_db.GOLD.WATER_PORTABILITY_ANALYTICS AS
+SELECT 
+    PH,
+    HARDNESS,
+    SOLIDS,
+    CHLORAMINES,
+    SULFATE,
+    CONDUCTIVITY,
+    ORGANIC_CARBON,
+    TRIHALOMETHANES,
+    TURBIDITY,
+    POTABILITY
+FROM PARROT_db.SILVER.CLEANED_WATER_PORTABILITY;
+
+-- Materialized View for Singapore Water Trends
+CREATE OR REPLACE MATERIALIZED VIEW PARROT_db.GOLD.SG_WATER_TRENDS AS
+SELECT 
+    YEAR,
+    WATER_QUALITY_PARAMETER,
+    AVERAGE_VALUE,
+    UNIT
+FROM PARROT_db.SILVER.CLEANED_WATER_QUALITY
+WHERE WATER_QUALITY_PARAMETER IN ('PH VALUE', 'CONDUCTIVITY', 'TURBIDITY', 'TOTAL DISSOLVED SOLID');
+
+
+-- ==========================================
+-- 12. AGGREGATED TABLES FOR DASHBOARD
+-- ==========================================
+
+-- Potability Distribution (Pie Chart)
+CREATE OR REPLACE TABLE PORTABILITY_DISTRIBUTION AS
+SELECT 
+    CASE WHEN POTABILITY = 1 THEN 'Potable' ELSE 'Non-Potable' END AS status,
+    COUNT(*) AS count,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM WATER_PORTABILITY_ANALYTICS), 1) AS percentage
+FROM WATER_PORTABILITY_ANALYTICS
+GROUP BY POTABILITY;
+
+-- WHO Compliance (Bar Chart)
+CREATE OR REPLACE TABLE WHO_COMPLIANCE AS
+SELECT 'pH' AS parameter,
+    ROUND(SUM(CASE WHEN PH BETWEEN 6.5 AND 8.5 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS compliance_pct,
+    ROUND(AVG(PH), 2) AS avg_value
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'Hardness',
+    ROUND(SUM(CASE WHEN HARDNESS <= 500 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(HARDNESS), 2)
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'TDS',
+    ROUND(SUM(CASE WHEN SOLIDS <= 1000 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(SOLIDS), 2)
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'Chloramines',
+    ROUND(SUM(CASE WHEN CHLORAMINES <= 4.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(CHLORAMINES), 2)
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'Sulfate',
+    ROUND(SUM(CASE WHEN SULFATE <= 250 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(SULFATE), 2)
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'Conductivity',
+    ROUND(SUM(CASE WHEN CONDUCTIVITY <= 400 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(CONDUCTIVITY), 2)
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'Organic Carbon',
+    ROUND(SUM(CASE WHEN ORGANIC_CARBON <= 2.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(ORGANIC_CARBON), 2)
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'Trihalomethanes',
+    ROUND(SUM(CASE WHEN TRIHALOMETHANES <= 80 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(TRIHALOMETHANES), 2)
+FROM WATER_PORTABILITY_ANALYTICS
+UNION ALL
+SELECT 'Turbidity',
+    ROUND(SUM(CASE WHEN TURBIDITY <= 5.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1),
+    ROUND(AVG(TURBIDITY), 2)
+FROM WATER_PORTABILITY_ANALYTICS;
+
+-- Yearly Trends (Line Charts)
+CREATE OR REPLACE TABLE YEARLY_TRENDS AS
+SELECT 
+    YEAR,
+    WATER_QUALITY_PARAMETER,
+    ROUND(AVG(AVERAGE_VALUE), 2) AS avg_value
+FROM SG_WATER_TRENDS
+GROUP BY YEAR, WATER_QUALITY_PARAMETER
+ORDER BY WATER_QUALITY_PARAMETER, YEAR;
+
+
+-- ==========================================
+-- 13. VERIFY GOLD TABLES
+-- ==========================================
+
+SELECT * FROM PORTABILITY_DISTRIBUTION;
+SELECT * FROM WHO_COMPLIANCE ORDER BY compliance_pct;
+SELECT * FROM YEARLY_TRENDS;
+
+-- ==========================================
+-- 14. CLEAN UP (Optional)
+-- ==========================================
+
+-- ALTER WAREHOUSE PARROT_wh SUSPEND;
